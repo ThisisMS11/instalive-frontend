@@ -391,6 +391,7 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
     const currentStatus = (statusData?.data as unknown as string) || broadcast.status;
     const isLive = currentStatus === "live";
     const [isTransitioning, setIsTransitioning] = useState(false);
+    const localStreamRef = useRef<MediaStream | null>(null);
 
     // ─── Transition broadcast status (testing / live) ────
     const handleTransition = (targetStatus: string) => {
@@ -414,6 +415,41 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
             }
         );
     };
+
+    // ─── Start MediaRecorder ─────────────────────────────
+    const startRecorder = useCallback((stream: MediaStream) => {
+        const mimeType = "video/webm; codecs=h264,opus";
+        const supported = MediaRecorder.isTypeSupported(mimeType);
+        if (!supported) {
+            console.warn("[RECORDER] ⚠️ h264 not supported, falling back to default");
+        }
+
+        const recorder = new MediaRecorder(stream, {
+            mimeType: supported ? mimeType : undefined,
+            audioBitsPerSecond: 128000,
+            videoBitsPerSecond: 4500000,
+        });
+        console.log("[RECORDER] Created — actual mimeType:", recorder.mimeType);
+
+        recorder.ondataavailable = (ev) => {
+            // Discard if this recorder has been superseded (e.g. during overlay switch)
+            if (recorder !== mediaRecorderRef.current) return;
+            const wsOpen = wsRef.current?.readyState === WebSocket.OPEN;
+            if (wsOpen && ev.data.size > 0) {
+                wsRef.current!.send(ev.data);
+            } else if (!wsOpen) {
+                console.warn("[RECORDER] ⚠️ WS closed — chunk dropped");
+            }
+        };
+
+        recorder.onerror = (err) => console.error("[RECORDER] ❌ Error:", err);
+        recorder.onstart = () => console.log("[RECORDER] ▶️ Started recording");
+        recorder.onstop = () => console.log("[RECORDER] ⏹️ Stopped recording");
+
+        recorder.start(750);
+        mediaRecorderRef.current = recorder;
+        return recorder;
+    }, []);
 
     // ─── WebSocket Connection ────────────────────────────
     useEffect(() => {
@@ -443,6 +479,19 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
                 try {
                     const msg = JSON.parse(event.data);
                     console.log("[WS] 📨 Message received — type:", msg.type, "| full:", msg);
+
+                    if (msg.type === "restart-recorder") {
+                        // Backend restarted FFmpeg — recorder is already stopped by
+                        // handleOverlayChange. Start a fresh one after a brief delay so
+                        // the new FFmpeg process is ready to receive the EBML header.
+                        console.log("[RECORDER] 🔄 Starting fresh MediaRecorder for overlay switch");
+                        setTimeout(() => {
+                            const stream = localStreamRef.current;
+                            if (stream) {
+                                startRecorder(stream);
+                            }
+                        }, 500);
+                    }
                 } catch {
                     console.log("[WS] 📦 Binary data received, size:", event.data?.size ?? "unknown");
                 }
@@ -461,7 +510,7 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
             console.log("[WS] Cleanup — closing connection");
             ws?.close();
         };
-    }, [getToken]);
+    }, [getToken, startRecorder]);
 
     // ─── Start webcam ────────────────────────────────────
     const startWebcam = useCallback(async () => {
@@ -476,6 +525,7 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
                 videoRef.current.srcObject = stream;
             }
             setLocalStream(stream);
+            localStreamRef.current = stream;
             return stream;
         } catch (err) {
             console.error("[CAM] ❌ Failed to access webcam:", err);
@@ -490,6 +540,7 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
             localStream.getTracks().forEach((t) => t.stop());
             if (videoRef.current) videoRef.current.srcObject = null;
             setLocalStream(null);
+            localStreamRef.current = null;
         }
     }, [localStream]);
 
@@ -527,36 +578,7 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
             }
 
             // Start MediaRecorder to send video chunks
-            const mimeType = "video/webm; codecs=h264,opus";
-            const supported = MediaRecorder.isTypeSupported(mimeType);
-            console.log(`[RECORDER] mimeType "${mimeType}" supported:`, supported);
-            if (!supported) {
-                console.warn("[RECORDER] ⚠️ h264 not supported, falling back to default");
-            }
-
-            const recorder = new MediaRecorder(stream, {
-                mimeType: supported ? mimeType : undefined,
-                audioBitsPerSecond: 128000,
-                videoBitsPerSecond: 4500000,
-            });
-            console.log("[RECORDER] Created — actual mimeType:", recorder.mimeType);
-
-            recorder.ondataavailable = (ev) => {
-                const wsOpen = wsRef.current?.readyState === WebSocket.OPEN;
-                console.log(`[RECORDER] Chunk: ${ev.data.size} bytes | WS open: ${wsOpen}`);
-                if (wsOpen && ev.data.size > 0) {
-                    wsRef.current!.send(ev.data);
-                } else if (!wsOpen) {
-                    console.warn("[RECORDER] ⚠️ WS closed — chunk dropped");
-                }
-            };
-
-            recorder.onerror = (err) => console.error("[RECORDER] ❌ Error:", err);
-            recorder.onstart = () => console.log("[RECORDER] ▶️ Started recording");
-            recorder.onstop = () => console.log("[RECORDER] ⏹️ Stopped recording");
-
-            recorder.start(750);
-            mediaRecorderRef.current = recorder;
+            startRecorder(stream);
 
             setIsStreaming(true);
             toast.success("Stream started!");
@@ -639,6 +661,13 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
     const handleOverlayChange = (url: string | undefined) => {
         setOverlayUrl(url);
         if (wsRef.current?.readyState === WebSocket.OPEN) {
+            // Nullify the ref first so ondataavailable discards the final flush chunk,
+            // then stop — preventing mid-stream WebM data from reaching the new FFmpeg.
+            const prev = mediaRecorderRef.current;
+            mediaRecorderRef.current = null;
+            if (prev && prev.state === "recording") {
+                prev.stop();
+            }
             wsRef.current.send(
                 JSON.stringify({
                     type: "switch-overlay",
@@ -725,7 +754,7 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
                         </TabsList>
 
                         <TabsContent value="chat" className="flex-1 mt-3 min-h-0">
-                            <ChatPanel liveChatId={broadcast.liveChatId} />
+                            <ChatPanel liveChatId={broadcast.liveChatId} streamerChannelId={broadcast.channelId} />
                         </TabsContent>
 
                         <TabsContent value="overlays" className="flex-1 mt-3 min-h-0">

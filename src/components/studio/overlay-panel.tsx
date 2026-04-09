@@ -1,12 +1,13 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Layers, Upload, Check, Loader2, X } from "lucide-react";
+import { Layers, Upload, Check, Loader2, X, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useOverlays, useUploadOverlay } from "@/services/api";
+import { useOverlays, useUploadOverlay, useDeleteOverlay } from "@/services/api";
 import { useRef } from "react";
 import Image from "next/image";
+import { toast } from "sonner";
 import type { Overlay } from "@/types";
 
 interface OverlayPanelProps {
@@ -17,6 +18,7 @@ interface OverlayPanelProps {
 export default function OverlayPanel({ activeOverlayUrl, onSelectOverlay }: OverlayPanelProps) {
     const { data: overlaysData, isLoading } = useOverlays();
     const uploadOverlay = useUploadOverlay();
+    const deleteOverlay = useDeleteOverlay();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const overlays: Overlay[] = overlaysData?.data ?? [];
@@ -26,7 +28,11 @@ export default function OverlayPanel({ activeOverlayUrl, onSelectOverlay }: Over
         if (!file) return;
         const formData = new FormData();
         formData.append("overlay", file);
-        uploadOverlay.mutate(formData);
+        formData.append("name", file.name);
+        uploadOverlay.mutate(formData, {
+            onSuccess: () => toast.success("Overlay uploaded successfully"),
+            onError: (err) => toast.error(`Upload failed: ${err.message}`),
+        });
         // Reset input
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
@@ -99,34 +105,54 @@ export default function OverlayPanel({ activeOverlayUrl, onSelectOverlay }: Over
                 ) : (
                     <div className="grid grid-cols-2 gap-2">
                         {overlays.map((overlay, i) => {
-                            const isActive = activeOverlayUrl === overlay.imageUrl;
+                            const isActive = activeOverlayUrl === overlay.url;
                             return (
-                                <motion.button
+                                <motion.div
                                     key={overlay.id}
                                     initial={{ opacity: 0, scale: 0.9 }}
                                     animate={{ opacity: 1, scale: 1 }}
                                     transition={{ delay: i * 0.05 }}
-                                    onClick={() => onSelectOverlay(isActive ? undefined : overlay.imageUrl)}
-                                    className={`relative aspect-video rounded-xl overflow-hidden border-2 transition-all hover:scale-[1.02] ${isActive
-                                            ? "border-violet-500 ring-2 ring-violet-500/30"
-                                            : "border-white/[0.06] hover:border-white/[0.12]"
+                                    onClick={() => onSelectOverlay(isActive ? undefined : overlay.url)}
+                                    className={`group cursor-pointer relative aspect-video rounded-xl overflow-hidden border-2 transition-all hover:scale-[1.02] ${isActive
+                                        ? "border-violet-500 ring-2 ring-violet-500/30"
+                                        : "border-white/[0.06] hover:border-white/[0.12]"
                                         }`}
                                 >
                                     <Image
-                                        src={overlay.imageUrl}
-                                        alt="Overlay"
+                                        src={overlay.url}
+                                        alt={overlay.description || "Overlay"}
                                         fill
                                         className="object-cover"
                                         unoptimized
                                     />
                                     {isActive && (
                                         <div className="absolute inset-0 bg-violet-500/20 flex items-center justify-center">
-                                            <div className="p-1.5 rounded-full bg-violet-500">
-                                                <Check className="w-3 h-3 text-white" />
+                                            <div className="p-1.5 rounded-full bg-violet-500 shadow-lg">
+                                                <Check className="w-4 h-4 text-white" />
                                             </div>
                                         </div>
                                     )}
-                                </motion.button>
+                                    <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <Button
+                                            variant="destructive"
+                                            size="icon"
+                                            className="h-6 w-6 rounded-full shadow-md"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (isActive) onSelectOverlay(undefined);
+                                                deleteOverlay.mutate(overlay.id, {
+                                                    onError: (err) => toast.error(`Delete failed: ${err.message}`),
+                                                });
+                                            }}
+                                            disabled={deleteOverlay.isPending}
+                                        >
+                                            <Trash2 className="w-3 h-3" />
+                                        </Button>
+                                    </div>
+                                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 p-1 text-[10px] truncate text-center backdrop-blur-sm">
+                                        {overlay.description || "Untitled"}
+                                    </div>
+                                </motion.div>
                             );
                         })}
                     </div>

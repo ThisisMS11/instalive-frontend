@@ -263,6 +263,24 @@ export function useUploadOverlay() {
     });
 }
 
+export function useDeleteOverlay() {
+    const getToken = useAuthToken();
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (id: string) => {
+            const token = await getToken();
+            return apiClient.delete<ApiResponse<null>>(
+                `/api/v1/youtube/broadcast/overlay/${id}`,
+                token
+            );
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["overlays"] });
+        },
+    });
+}
+
 // ─── Live Chat ──────────────────────────────────────────
 export function useChatMessages(liveChatId: string | undefined) {
     const getToken = useAuthToken();
@@ -288,8 +306,8 @@ export function usePostChatMessage() {
         mutationFn: async (data: { liveChatId: string; messageText: string }) => {
             const token = await getToken();
             return apiClient.post<ApiResponse<unknown>>(
-                "/api/v1/youtube/livechat",
-                data,
+                `/api/v1/youtube/livechat?liveChatId=${data.liveChatId}`,
+                { message: data.messageText },
                 token
             );
         },

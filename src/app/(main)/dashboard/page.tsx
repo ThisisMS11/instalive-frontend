@@ -330,13 +330,13 @@ export default function DashboardPage() {
     );
 
     return (
-        <main className="min-h-screen p-6 lg:p-8">
+        <main className="h-screen flex flex-col p-6 lg:p-8 overflow-hidden">
             {/* Header */}
             <motion.div
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4 }}
-                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8"
+                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 shrink-0"
             >
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
@@ -348,7 +348,7 @@ export default function DashboardPage() {
             </motion.div>
 
             {/* Stats */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 shrink-0">
                 <StatCard
                     icon={Radio}
                     label="Total Broadcasts"
@@ -379,16 +379,16 @@ export default function DashboardPage() {
                 />
             </div>
 
-            {/* Main content grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Broadcast History — takes 2 cols */}
+            {/* Main content grid — fills remaining viewport height */}
+            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Broadcast list — scrolls internally */}
                 <motion.div
                     initial={{ opacity: 0, y: 16 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.4, delay: 0.2 }}
-                    className="lg:col-span-2 glass rounded-2xl p-6"
+                    className="lg:col-span-2 glass rounded-2xl p-6 flex flex-col min-h-0"
                 >
-                    <div className="flex items-center justify-between mb-5">
+                    <div className="flex items-center justify-between mb-5 shrink-0">
                         <div>
                             <h2 className="text-lg font-semibold">Broadcasts</h2>
                             <p className="text-xs text-muted-foreground mt-0.5">
@@ -400,20 +400,20 @@ export default function DashboardPage() {
                         </Badge>
                     </div>
 
-                    <Separator className="bg-white/[0.06] mb-4" />
+                    <Separator className="bg-white/[0.06] mb-4 shrink-0" />
 
                     {isLoading ? (
-                        <div className="flex items-center justify-center py-16">
+                        <div className="flex items-center justify-center flex-1">
                             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                         </div>
                     ) : isError ? (
-                        <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <div className="flex flex-col items-center justify-center flex-1 text-center">
                             <AlertCircle className="w-8 h-8 text-red-400/60 mb-3" />
                             <p className="text-sm text-muted-foreground">Failed to load broadcasts</p>
                             <p className="text-xs text-muted-foreground/60 mt-1">Check your connection and try again</p>
                         </div>
                     ) : recentBroadcasts.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <div className="flex flex-col items-center justify-center flex-1 text-center">
                             <div className="p-4 rounded-2xl bg-white/[0.03] mb-4">
                                 <Tv className="w-8 h-8 text-muted-foreground/40" />
                             </div>
@@ -423,7 +423,12 @@ export default function DashboardPage() {
                             </p>
                         </div>
                     ) : (
-                        <div className="space-y-1">
+                        <div className="flex-1 overflow-y-auto space-y-1 pr-1
+                            [&::-webkit-scrollbar]:w-1.5
+                            [&::-webkit-scrollbar-track]:bg-transparent
+                            [&::-webkit-scrollbar-thumb]:bg-white/[0.08]
+                            [&::-webkit-scrollbar-thumb]:rounded-full
+                            [&::-webkit-scrollbar-thumb:hover]:bg-white/[0.15]">
                             {recentBroadcasts.map((broadcast, index) => (
                                 <BroadcastRow key={broadcast.id} broadcast={broadcast} index={index} />
                             ))}
@@ -431,8 +436,13 @@ export default function DashboardPage() {
                     )}
                 </motion.div>
 
-                {/* Right column */}
-                <div className="space-y-6">
+                {/* Right column — scrolls independently if needed */}
+                <div className="space-y-6 overflow-y-auto
+                    [&::-webkit-scrollbar]:w-1.5
+                    [&::-webkit-scrollbar-track]:bg-transparent
+                    [&::-webkit-scrollbar-thumb]:bg-white/[0.08]
+                    [&::-webkit-scrollbar-thumb]:rounded-full
+                    [&::-webkit-scrollbar-thumb:hover]:bg-white/[0.15]">
                     <YouTubeCard />
 
                     {/* Quick Actions */}

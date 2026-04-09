@@ -31,13 +31,14 @@ export interface YouTubeConnectionStatus {
 // ─── Broadcast ──────────────────────────────────────────
 export interface Broadcast {
     id: string;
-    youtubeId: string;
     title: string;
     description: string;
+    channelId: string;
     status: BroadcastStatus;
     scheduledStartTime: string;
     liveChatId: string;
-    createdBy: string;
+    liveStreamId: string;
+    privacyStatus: string;
     createdAt: string;
     updatedAt: string;
 }
@@ -73,21 +74,22 @@ export interface LiveStream {
 // ─── Overlay ────────────────────────────────────────────
 export interface Overlay {
     id: string;
-    broadcastId: string;
-    imageUrl: string;
+    userId: string;
     publicId: string;
+    url: string;
+    description: string;
     createdAt: string;
+    updatedAt: string;
 }
 
 // ─── Live Chat ──────────────────────────────────────────
 export interface ChatMessage {
     id: string;
     authorChannelId: string;
-    authorDisplayName: string;
-    authorProfileImageUrl: string;
-    messageText: string;
-    publishedAt: string;
-    type: "textMessageEvent" | "superChatEvent" | "membershipItem";
+    channelName: string;
+    profileImage: string;
+    messageContent: string;
+    liveChatId: string;
 }
 
 export interface BlockedUser {
