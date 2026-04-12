@@ -35,6 +35,7 @@ import ChatPanel from "@/components/studio/chat-panel";
 import OverlayPanel from "@/components/studio/overlay-panel";
 import StatsBar from "@/components/studio/stats-bar";
 import BlockedUsersPanel from "@/components/studio/blocked-users-panel";
+import BroadcastSettingsPanel from "@/components/studio/broadcast-settings-panel";
 import CreateBroadcastDialog from "@/components/dashboard/create-broadcast-dialog";
 import { toast } from "sonner";
 import type { Broadcast, BroadcastStatus } from "@/types";
@@ -732,7 +733,7 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
                 {/* ═══ Right: Chat / Overlays / Blocked Users ═══ */}
                 <div className="col-span-12 lg:col-span-5 xl:col-span-4 flex flex-col gap-4">
                     <Tabs defaultValue="chat" className="flex-1 flex flex-col min-h-0">
-                        <TabsList className="w-full bg-white/[0.04] border border-white/[0.06] rounded-xl p-1 h-auto gap-1">
+                        <TabsList className="w-full bg-white/[0.04] border border-white/[0.06] rounded-xl p-1 h-auto gap-1 flex-wrap">
                             <TabsTrigger
                                 value="chat"
                                 className="flex-1 rounded-lg text-xs py-2 data-[state=active]:bg-white/[0.08] data-[state=active]:text-white transition-all"
@@ -751,6 +752,12 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
                             >
                                 Moderation
                             </TabsTrigger>
+                            <TabsTrigger
+                                value="settings"
+                                className="flex-1 rounded-lg text-xs py-2 data-[state=active]:bg-white/[0.08] data-[state=active]:text-white transition-all"
+                            >
+                                Settings
+                            </TabsTrigger>
                         </TabsList>
 
                         <TabsContent value="chat" className="flex-1 mt-3 min-h-0">
@@ -766,6 +773,10 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
 
                         <TabsContent value="moderation" className="flex-1 mt-3 min-h-0">
                             <BlockedUsersPanel />
+                        </TabsContent>
+
+                        <TabsContent value="settings" className="flex-1 mt-3 min-h-0">
+                            <BroadcastSettingsPanel broadcastId={broadcast.id} />
                         </TabsContent>
                     </Tabs>
                 </div>

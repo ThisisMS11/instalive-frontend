@@ -281,6 +281,53 @@ export function useDeleteOverlay() {
     });
 }
 
+// ─── Broadcast Settings ─────────────────────────────────
+export interface BroadcastSettings {
+    privacyStatus: string;
+    madeForKids: boolean;
+}
+
+export function useBroadcastSettings(broadcastId: string | undefined) {
+    const getToken = useAuthToken();
+    return useQuery({
+        queryKey: ["broadcast", "settings", broadcastId],
+        queryFn: async () => {
+            const token = await getToken();
+            return apiClient.get<ApiResponse<BroadcastSettings>>(
+                `/api/v1/youtube/broadcast/settings?broadcastId=${broadcastId}`,
+                token
+            );
+        },
+        enabled: !!broadcastId,
+    });
+}
+
+export function useUpdateBroadcastSettings() {
+    const getToken = useAuthToken();
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (data: {
+            broadcastId: string;
+            privacyStatus?: string;
+            madeForKids?: boolean;
+        }) => {
+            const token = await getToken();
+            return apiClient.patch<ApiResponse<BroadcastSettings>>(
+                "/api/v1/youtube/broadcast/settings",
+                data,
+                token
+            );
+        },
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({
+                queryKey: ["broadcast", "settings", variables.broadcastId],
+            });
+            queryClient.invalidateQueries({ queryKey: ["broadcasts"] });
+        },
+    });
+}
+
 // ─── Live Chat ──────────────────────────────────────────
 export function useChatMessages(liveChatId: string | undefined) {
     const getToken = useAuthToken();
