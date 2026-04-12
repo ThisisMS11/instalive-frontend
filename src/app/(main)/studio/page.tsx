@@ -373,6 +373,8 @@ function BroadcastSelector({
     );
 }
 
+type SourceMode = "camera" | "screen" | "screen+pip";
+
 // ─── Studio View (main streaming interface) ──────────────
 function StudioView({ broadcast }: { broadcast: Broadcast }) {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -385,6 +387,22 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
     const [overlayUrl, setOverlayUrl] = useState<string | undefined>();
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+    // Screen sharing state & refs
+    const [sourceMode, setSourceMode] = useState<SourceMode>("camera");
+    const [isScreenSharing, setIsScreenSharing] = useState(false);
+    const screenStreamRef = useRef<MediaStream | null>(null);
+    const webcamStreamRef = useRef<MediaStream | null>(null);
+    const pipCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const pipRafRef = useRef<number | null>(null);
+    const audioCtxRef = useRef<AudioContext | null>(null);
+    const compositeStreamRef = useRef<MediaStream | null>(null);
+    // Always-current ref for the stop function (avoids stale closures in onended)
+    const stopScreenShareRef = useRef<() => void>(() => {});
+
+    const isDisplayMediaSupported =
+        typeof window !== "undefined" &&
+        typeof navigator.mediaDevices?.getDisplayMedia === "function";
 
     const { getToken } = useAuth();
     const { data: statusData } = useBroadcastStatus(broadcast.id);
@@ -527,6 +545,7 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
             }
             setLocalStream(stream);
             localStreamRef.current = stream;
+            webcamStreamRef.current = stream;
             return stream;
         } catch (err) {
             console.error("[CAM] ❌ Failed to access webcam:", err);
@@ -535,8 +554,19 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
         }
     }, []);
 
-    // ─── Stop webcam ─────────────────────────────────────
+    // ─── Stop webcam (also cleans up any screen share resources) ────
     const stopWebcam = useCallback(() => {
+        // Tear down PiP compositor
+        if (pipRafRef.current) { cancelAnimationFrame(pipRafRef.current); pipRafRef.current = null; }
+        if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null; }
+        compositeStreamRef.current?.getTracks().forEach((t) => t.stop());
+        compositeStreamRef.current = null;
+        screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+        screenStreamRef.current = null;
+        webcamStreamRef.current = null;
+        setIsScreenSharing(false);
+        setSourceMode("camera");
+
         if (localStream) {
             localStream.getTracks().forEach((t) => t.stop());
             if (videoRef.current) videoRef.current.srcObject = null;
@@ -545,12 +575,186 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
         }
     }, [localStream]);
 
+    // ─── Screen sharing helpers ──────────────────────────
+
+    /** Merge multiple audio tracks into one via Web Audio API. */
+    const mergeAudioTracks = (tracks: MediaStreamTrack[]): MediaStreamTrack | null => {
+        const live = tracks.filter(Boolean);
+        if (live.length === 0) return null;
+        if (live.length === 1) return live[0];
+        const ctx = new AudioContext();
+        audioCtxRef.current = ctx;
+        const dest = ctx.createMediaStreamDestination();
+        live.forEach((t) => ctx.createMediaStreamSource(new MediaStream([t])).connect(dest));
+        return dest.stream.getAudioTracks()[0] ?? null;
+    };
+
+    /** Build a canvas-composited stream: screen full-frame + webcam PiP. */
+    const startPipCompositor = async (): Promise<MediaStream> => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 1280;
+        canvas.height = 720;
+        pipCanvasRef.current = canvas;
+        const ctx2d = canvas.getContext("2d")!;
+
+        // Hidden video elements — no need to attach to DOM
+        const screenVid = document.createElement("video");
+        screenVid.srcObject = screenStreamRef.current;
+        screenVid.muted = true;
+        screenVid.playsInline = true;
+
+        const camVid = document.createElement("video");
+        camVid.srcObject = webcamStreamRef.current;
+        camVid.muted = true;
+        camVid.playsInline = true;
+
+        // Wait for both sources to be ready before drawing
+        await Promise.all([
+            new Promise<void>((r) => { screenVid.oncanplay = () => r(); screenVid.play().catch(() => r()); }),
+            new Promise<void>((r) => { camVid.oncanplay = () => r(); camVid.play().catch(() => r()); }),
+        ]);
+
+        const PIP_W = 240, PIP_H = 135, MARGIN = 16;
+        const draw = () => {
+            ctx2d.drawImage(screenVid, 0, 0, 1280, 720);
+            ctx2d.drawImage(camVid, 1280 - PIP_W - MARGIN, 720 - PIP_H - MARGIN, PIP_W, PIP_H);
+            pipRafRef.current = requestAnimationFrame(draw);
+        };
+        draw();
+
+        const composite = (canvas as any).captureStream(30) as MediaStream;
+        compositeStreamRef.current = composite;
+        return composite;
+    };
+
+    /** Build the final MediaStream for a given source mode using existing refs. */
+    const buildSourceStream = async (mode: "screen" | "screen+pip"): Promise<MediaStream> => {
+        const screenAudio = screenStreamRef.current?.getAudioTracks()[0] ?? null;
+        const micAudio = webcamStreamRef.current?.getAudioTracks()[0] ?? null;
+
+        if (mode === "screen+pip") {
+            const composite = await startPipCompositor();
+            const mergedAudio = mergeAudioTracks([screenAudio, micAudio].filter(Boolean) as MediaStreamTrack[]);
+            const tracks: MediaStreamTrack[] = [...composite.getVideoTracks()];
+            if (mergedAudio) tracks.push(mergedAudio);
+            return new MediaStream(tracks);
+        }
+
+        // screen-only
+        const mergedAudio = mergeAudioTracks([screenAudio, micAudio].filter(Boolean) as MediaStreamTrack[]);
+        const tracks: MediaStreamTrack[] = [...(screenStreamRef.current?.getVideoTracks() ?? [])];
+        if (mergedAudio) tracks.push(mergedAudio);
+        return new MediaStream(tracks);
+    };
+
+    /** Hot-swap the active MediaStream and restart FFmpeg via the existing switch-overlay pattern. */
+    const swapStream = (newStream: MediaStream) => {
+        localStreamRef.current = newStream;
+        if (videoRef.current) videoRef.current.srcObject = newStream;
+
+        if (isStreaming) {
+            const prev = mediaRecorderRef.current;
+            mediaRecorderRef.current = null;
+            if (prev?.state === "recording") prev.stop();
+            wsRef.current?.send(JSON.stringify({ type: "switch-overlay", overlayUrl: overlayUrl || "" }));
+        }
+    };
+
+    /** Tear down compositor resources without stopping the screen stream. */
+    const teardownCompositor = async () => {
+        if (pipRafRef.current) { cancelAnimationFrame(pipRafRef.current); pipRafRef.current = null; }
+        if (audioCtxRef.current) { await audioCtxRef.current.close(); audioCtxRef.current = null; }
+        compositeStreamRef.current?.getTracks().forEach((t) => t.stop());
+        compositeStreamRef.current = null;
+    };
+
+    const stopScreenShare = async () => {
+        await teardownCompositor();
+        screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+        screenStreamRef.current = null;
+
+        // Fall back to webcam
+        const cam = webcamStreamRef.current;
+        if (cam) {
+            swapStream(cam);
+            setLocalStream(cam);
+        }
+
+        setIsScreenSharing(false);
+        setSourceMode("camera");
+    };
+
+    // Keep the ref current so the onended handler always calls the latest version
+    stopScreenShareRef.current = stopScreenShare;
+
+    const startScreenShare = async (mode: "screen" | "screen+pip") => {
+        try {
+            const screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { frameRate: 30 } as MediaTrackConstraints,
+                audio: true,
+            });
+            screenStreamRef.current = screenStream;
+
+            // Honour the OS "Stop sharing" button
+            screenStream.getVideoTracks()[0]?.addEventListener("ended", () => {
+                stopScreenShareRef.current();
+            });
+
+            // Ensure webcam is available for PiP or audio fallback
+            if (!webcamStreamRef.current) {
+                const cam = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(() => null);
+                if (cam) {
+                    webcamStreamRef.current = cam;
+                    setLocalStream(cam);
+                    localStreamRef.current = cam;
+                }
+            }
+
+            const finalStream = await buildSourceStream(mode);
+            swapStream(finalStream);
+            setIsScreenSharing(true);
+            setSourceMode(mode);
+
+            // If not yet streaming, update the local stream state so video preview works
+            if (!isStreaming) {
+                setLocalStream(finalStream);
+                localStreamRef.current = finalStream;
+                if (videoRef.current) videoRef.current.srcObject = finalStream;
+            }
+        } catch (err) {
+            console.error("[SCREEN] Failed to start screen share:", err);
+            toast.error("Could not start screen sharing. Check permissions.");
+        }
+    };
+
+    /** Switch between screen and screen+pip modes without re-prompting for screen. */
+    const switchPipMode = async (newMode: "screen" | "screen+pip") => {
+        if (!screenStreamRef.current) return;
+        await teardownCompositor();
+        const finalStream = await buildSourceStream(newMode);
+        swapStream(finalStream);
+        setSourceMode(newMode);
+    };
+
+    const handleToggleScreenShare = async (mode: "screen" | "screen+pip") => {
+        if (isScreenSharing) {
+            // Already sharing — toggle PiP without re-prompting
+            if (mode !== sourceMode) await switchPipMode(mode);
+        } else {
+            await startScreenShare(mode);
+        }
+    };
+
     // ─── Go Live ─────────────────────────────────────────
     const handleGoLive = async () => {
         console.log("[LIVE] Go Live clicked");
         setIsStarting(true);
         try {
-            const stream = await startWebcam();
+            // If screen sharing was started before going live, use that stream
+            let stream: MediaStream | null = isScreenSharing ? localStreamRef.current : null;
+            if (!stream) {
+                stream = await startWebcam();
+            }
             if (!stream) {
                 console.error("[LIVE] ❌ No stream — aborting");
                 setIsStarting(false);
@@ -578,8 +782,8 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
                 console.warn("[LIVE] ⚠️ WS not open — start message NOT sent. Stream data will not reach backend.");
             }
 
-            // Start MediaRecorder to send video chunks
-            startRecorder(stream);
+            // Start MediaRecorder — use localStreamRef so screen share is picked up
+            startRecorder(localStreamRef.current ?? stream);
 
             setIsStreaming(true);
             toast.success("Stream started!");
@@ -714,6 +918,7 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
                         isLive={isLive}
                         onGoLive={handleGoLive}
                         isStarting={isStarting}
+                        sourceMode={sourceMode}
                     />
 
                     <StreamControls
@@ -725,6 +930,11 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
                         onToggleAudio={handleToggleAudio}
                         onStopStream={handleStopStream}
                         isStopping={isStopping}
+                        isScreenSharing={isScreenSharing}
+                        sourceMode={sourceMode}
+                        isDisplayMediaSupported={isDisplayMediaSupported}
+                        onToggleScreenShare={handleToggleScreenShare}
+                        onStopScreenShare={stopScreenShare}
                     />
 
                     <StatsBar broadcastId={broadcast.id} isLive={isLive} />

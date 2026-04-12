@@ -2,8 +2,10 @@
 
 import { useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { VideoOff, Loader2 } from "lucide-react";
+import { VideoOff, Loader2, Monitor } from "lucide-react";
 import Image from "next/image";
+
+type SourceMode = "camera" | "screen" | "screen+pip";
 
 interface VideoPreviewProps {
     videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -12,6 +14,7 @@ interface VideoPreviewProps {
     isLive: boolean;
     onGoLive: () => void;
     isStarting: boolean;
+    sourceMode?: SourceMode;
 }
 
 export default function VideoPreview({
@@ -21,6 +24,7 @@ export default function VideoPreview({
     isLive,
     onGoLive,
     isStarting,
+    sourceMode = "camera",
 }: VideoPreviewProps) {
     return (
         <motion.div
@@ -113,23 +117,41 @@ export default function VideoPreview({
                 </div>
             )}
 
-            {/* Live indicator overlay */}
-            <AnimatePresence>
-                {isLive && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -8 }}
-                        className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/90 backdrop-blur-sm"
-                    >
-                        <span className="relative w-2 h-2">
-                            <span className="absolute inset-0 rounded-full bg-white animate-ping" />
-                            <span className="relative block w-2 h-2 rounded-full bg-white" />
-                        </span>
-                        <span className="text-xs font-bold text-white tracking-wider">LIVE</span>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {/* Status badges — top-left */}
+            <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
+                <AnimatePresence>
+                    {isLive && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -8 }}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/90 backdrop-blur-sm"
+                        >
+                            <span className="relative w-2 h-2">
+                                <span className="absolute inset-0 rounded-full bg-white animate-ping" />
+                                <span className="relative block w-2 h-2 rounded-full bg-white" />
+                            </span>
+                            <span className="text-xs font-bold text-white tracking-wider">LIVE</span>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                    {isStreaming && sourceMode !== "camera" && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -8 }}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-500/80 backdrop-blur-sm"
+                        >
+                            <Monitor className="w-3 h-3 text-white" />
+                            <span className="text-xs font-bold text-white tracking-wider">
+                                {sourceMode === "screen+pip" ? "SCREEN+PiP" : "SCREEN"}
+                            </span>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
         </motion.div>
     );
 }

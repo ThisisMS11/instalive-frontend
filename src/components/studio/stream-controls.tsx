@@ -10,6 +10,9 @@ import {
     Copy,
     Check,
     Loader2,
+    Monitor,
+    MonitorOff,
+    PictureInPicture2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +27,8 @@ import {
 } from "@/components/ui/dialog";
 import { useState } from "react";
 
+type SourceMode = "camera" | "screen" | "screen+pip";
+
 interface StreamControlsProps {
     isStreaming: boolean;
     isVideoOn: boolean;
@@ -33,6 +38,12 @@ interface StreamControlsProps {
     onToggleAudio: () => void;
     onStopStream: () => void;
     isStopping: boolean;
+    // Screen sharing
+    isScreenSharing: boolean;
+    sourceMode: SourceMode;
+    isDisplayMediaSupported: boolean;
+    onToggleScreenShare: (mode: "screen" | "screen+pip") => void;
+    onStopScreenShare: () => void;
 }
 
 export default function StreamControls({
@@ -44,6 +55,11 @@ export default function StreamControls({
     onToggleAudio,
     onStopStream,
     isStopping,
+    isScreenSharing,
+    sourceMode,
+    isDisplayMediaSupported,
+    onToggleScreenShare,
+    onStopScreenShare,
 }: StreamControlsProps) {
     const [copied, setCopied] = useState(false);
 
@@ -60,17 +76,22 @@ export default function StreamControls({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.2 }}
-            className="flex items-center justify-center gap-3 py-3"
+            className="flex items-center justify-center gap-3 py-3 flex-wrap"
         >
             {/* Video toggle */}
             <Button
                 variant="ghost"
                 size="icon"
                 onClick={onToggleVideo}
-                className={`rounded-xl w-11 h-11 transition-all ${isVideoOn
+                disabled={isScreenSharing}
+                title={isScreenSharing ? "Camera disabled while screen sharing" : (isVideoOn ? "Turn off camera" : "Turn on camera")}
+                className={`rounded-xl w-11 h-11 transition-all ${
+                    isScreenSharing
+                        ? "opacity-40 cursor-not-allowed bg-white/[0.03] text-muted-foreground"
+                        : isVideoOn
                         ? "bg-white/[0.06] hover:bg-white/[0.1] text-white"
                         : "bg-red-500/20 hover:bg-red-500/30 text-red-400"
-                    }`}
+                }`}
             >
                 {isVideoOn ? <Video className="w-4.5 h-4.5" /> : <VideoOff className="w-4.5 h-4.5" />}
             </Button>
@@ -80,19 +101,75 @@ export default function StreamControls({
                 variant="ghost"
                 size="icon"
                 onClick={onToggleAudio}
-                className={`rounded-xl w-11 h-11 transition-all ${isAudioOn
+                title={isAudioOn ? "Mute" : "Unmute"}
+                className={`rounded-xl w-11 h-11 transition-all ${
+                    isAudioOn
                         ? "bg-white/[0.06] hover:bg-white/[0.1] text-white"
                         : "bg-red-500/20 hover:bg-red-500/30 text-red-400"
-                    }`}
+                }`}
             >
                 {isAudioOn ? <Mic className="w-4.5 h-4.5" /> : <MicOff className="w-4.5 h-4.5" />}
             </Button>
+
+            {/* Screen share toggle — hidden if not supported (mobile / Firefox private) */}
+            {isDisplayMediaSupported && (
+                <>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() =>
+                            isScreenSharing
+                                ? onStopScreenShare()
+                                : onToggleScreenShare("screen")
+                        }
+                        title={isScreenSharing ? "Stop screen share" : "Share screen"}
+                        className={`rounded-xl w-11 h-11 transition-all ${
+                            isScreenSharing
+                                ? "bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400"
+                                : "bg-white/[0.06] hover:bg-white/[0.1] text-white"
+                        }`}
+                    >
+                        {isScreenSharing ? (
+                            <MonitorOff className="w-4.5 h-4.5" />
+                        ) : (
+                            <Monitor className="w-4.5 h-4.5" />
+                        )}
+                    </Button>
+
+                    {/* PiP toggle — only visible while screen sharing */}
+                    {isScreenSharing && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                                onToggleScreenShare(
+                                    sourceMode === "screen+pip" ? "screen" : "screen+pip"
+                                )
+                            }
+                            title={
+                                sourceMode === "screen+pip"
+                                    ? "Disable webcam Picture-in-Picture"
+                                    : "Enable webcam Picture-in-Picture"
+                            }
+                            className={`rounded-xl h-11 px-3 gap-1.5 text-xs transition-all ${
+                                sourceMode === "screen+pip"
+                                    ? "bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300"
+                                    : "bg-white/[0.06] hover:bg-white/[0.1] text-muted-foreground"
+                            }`}
+                        >
+                            <PictureInPicture2 className="w-3.5 h-3.5" />
+                            {sourceMode === "screen+pip" ? "PiP On" : "PiP Off"}
+                        </Button>
+                    )}
+                </>
+            )}
 
             {/* Copy URL */}
             <Button
                 variant="ghost"
                 size="icon"
                 onClick={handleCopy}
+                title="Copy YouTube URL"
                 className="rounded-xl w-11 h-11 bg-white/[0.06] hover:bg-white/[0.1]"
             >
                 {copied ? (
