@@ -23,6 +23,7 @@ import { Separator } from "@/components/ui/separator";
 import CreateBroadcastDialog from "@/components/dashboard/create-broadcast-dialog";
 import {
     useBroadcasts,
+    useBroadcastStatus,
     useYouTubeStatus,
     useYouTubeInfo,
     useInitiateYouTubeOAuth,
@@ -253,6 +254,25 @@ function YouTubeCard() {
 
 // ─── Broadcast Row ───────────────────────────────────────
 function BroadcastRow({ broadcast, index }: { broadcast: Broadcast; index: number }) {
+    const queryClient = useQueryClient();
+
+    // For live broadcasts, poll YouTube for the real-time status
+    const isLiveInDb = broadcast.status === "live" || broadcast.status === "liveStarting";
+    const { data: statusData } = useBroadcastStatus(isLiveInDb ? broadcast.id : undefined);
+    const polledStatus = (statusData?.data as unknown as string) || null;
+
+    // When polled status flips to complete, invalidate the broadcasts list so the DB row refreshes
+    useEffect(() => {
+        if (polledStatus === "complete" && isLiveInDb) {
+            queryClient.invalidateQueries({ queryKey: ["broadcasts"] });
+        }
+    }, [polledStatus, isLiveInDb, queryClient]);
+
+    const displayStatus = (isLiveInDb && polledStatus ? polledStatus : broadcast.status) as BroadcastStatus;
+
+    // Prefer scheduledStartTime; fall back to createdAt to avoid "Invalid Date"
+    const dateStr = broadcast.scheduledStartTime || broadcast.createdAt;
+
     return (
         <motion.div
             initial={{ opacity: 0, x: -8 }}
@@ -271,16 +291,16 @@ function BroadcastRow({ broadcast, index }: { broadcast: Broadcast; index: numbe
                 <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
                     <span className="flex items-center gap-1">
                         <CalendarDays className="w-3 h-3" />
-                        {formatDate(broadcast.scheduledStartTime)}
+                        {dateStr ? formatDate(dateStr) : "—"}
                     </span>
                 </div>
             </div>
 
             {/* Status */}
-            <StatusBadge status={broadcast.status} />
+            <StatusBadge status={displayStatus} />
 
             {/* Go to studio */}
-            {(broadcast.status === "ready" || broadcast.status === "live") && (
+            {(displayStatus === "ready" || displayStatus === "live" || displayStatus === "liveStarting") && (
                 <Link
                     href={`/studio?broadcastId=${broadcast.id}`}
                     className="p-2 rounded-lg hover:bg-violet-500/10 transition-colors"

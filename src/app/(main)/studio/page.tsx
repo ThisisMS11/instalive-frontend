@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
     useBroadcasts,
     useBroadcastStatus,
@@ -405,12 +406,40 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
         typeof navigator.mediaDevices?.getDisplayMedia === "function";
 
     const { getToken } = useAuth();
+    const router = useRouter();
     const { data: statusData } = useBroadcastStatus(broadcast.id);
     const updateStatus = useUpdateBroadcastStatus();
     const currentStatus = (statusData?.data as unknown as string) || broadcast.status;
     const isLive = currentStatus === "live";
     const [isTransitioning, setIsTransitioning] = useState(false);
     const localStreamRef = useRef<MediaStream | null>(null);
+    const autoStoppedRef = useRef(false);
+
+    // ─── Auto-stop when YouTube ends the stream externally ──
+    useEffect(() => {
+        if (currentStatus === "complete" && isStreaming && !autoStoppedRef.current) {
+            autoStoppedRef.current = true;
+
+            // Stop MediaRecorder
+            const rec = mediaRecorderRef.current;
+            mediaRecorderRef.current = null;
+            if (rec?.state === "recording") rec.stop();
+
+            // Signal backend to stop FFmpeg
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({ type: "stop" }));
+            }
+
+            // Tear down camera / screen share
+            stopWebcam();
+            setIsStreaming(false);
+
+            toast.info("YouTube ended your broadcast. Redirecting to dashboard…", {
+                duration: 4000,
+            });
+            setTimeout(() => router.push("/dashboard"), 3500);
+        }
+    }, [currentStatus, isStreaming, stopWebcam, router]);
 
     // ─── Transition broadcast status (testing / live) ────
     const handleTransition = (targetStatus: string) => {
