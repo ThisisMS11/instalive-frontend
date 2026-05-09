@@ -415,6 +415,27 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
     const localStreamRef = useRef<MediaStream | null>(null);
     const autoStoppedRef = useRef(false);
 
+    // ─── Stop webcam (also cleans up any screen share resources) ────
+    const stopWebcam = useCallback(() => {
+        // Tear down PiP compositor
+        if (pipRafRef.current) { cancelAnimationFrame(pipRafRef.current); pipRafRef.current = null; }
+        if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null; }
+        compositeStreamRef.current?.getTracks().forEach((t) => t.stop());
+        compositeStreamRef.current = null;
+        screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+        screenStreamRef.current = null;
+        webcamStreamRef.current = null;
+        setIsScreenSharing(false);
+        setSourceMode("camera");
+
+        if (localStream) {
+            localStream.getTracks().forEach((t) => t.stop());
+            if (videoRef.current) videoRef.current.srcObject = null;
+            setLocalStream(null);
+            localStreamRef.current = null;
+        }
+    }, [localStream]);
+
     // ─── Auto-stop when YouTube ends the stream externally ──
     useEffect(() => {
         if (currentStatus === "complete" && isStreaming && !autoStoppedRef.current) {
@@ -582,27 +603,6 @@ function StudioView({ broadcast }: { broadcast: Broadcast }) {
             return null;
         }
     }, []);
-
-    // ─── Stop webcam (also cleans up any screen share resources) ────
-    const stopWebcam = useCallback(() => {
-        // Tear down PiP compositor
-        if (pipRafRef.current) { cancelAnimationFrame(pipRafRef.current); pipRafRef.current = null; }
-        if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null; }
-        compositeStreamRef.current?.getTracks().forEach((t) => t.stop());
-        compositeStreamRef.current = null;
-        screenStreamRef.current?.getTracks().forEach((t) => t.stop());
-        screenStreamRef.current = null;
-        webcamStreamRef.current = null;
-        setIsScreenSharing(false);
-        setSourceMode("camera");
-
-        if (localStream) {
-            localStream.getTracks().forEach((t) => t.stop());
-            if (videoRef.current) videoRef.current.srcObject = null;
-            setLocalStream(null);
-            localStreamRef.current = null;
-        }
-    }, [localStream]);
 
     // ─── Screen sharing helpers ──────────────────────────
 

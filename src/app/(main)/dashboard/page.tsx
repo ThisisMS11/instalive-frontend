@@ -33,6 +33,7 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Suspense } from "react";
 import type { Broadcast, BroadcastStatus } from "@/types";
 
 // ─── Status helpers ──────────────────────────────────────
@@ -312,15 +313,12 @@ function BroadcastRow({ broadcast, index }: { broadcast: Broadcast; index: numbe
     );
 }
 
-// ─── Dashboard Page ──────────────────────────────────────
-export default function DashboardPage() {
-    const { data: broadcastsData, isLoading, isError } = useBroadcasts();
-    const broadcasts = broadcastsData?.data ?? [];
+// ─── OAuth callback handler (needs Suspense due to useSearchParams) ──
+function OAuthCallbackHandler() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const queryClient = useQueryClient();
 
-    // Handle YouTube OAuth redirect params
     useEffect(() => {
         const youtubeConnected = searchParams.get("youtube_connected");
         const youtubeError = searchParams.get("youtube_error");
@@ -328,7 +326,6 @@ export default function DashboardPage() {
         if (youtubeConnected === "true") {
             toast.success("YouTube channel connected successfully!");
             queryClient.invalidateQueries({ queryKey: ["youtube"] });
-            // Clean URL
             router.replace("/dashboard", { scroll: false });
         } else if (youtubeError) {
             const errorMessages: Record<string, string> = {
@@ -343,6 +340,14 @@ export default function DashboardPage() {
         }
     }, [searchParams, queryClient, router]);
 
+    return null;
+}
+
+// ─── Dashboard Page ──────────────────────────────────────
+export default function DashboardPage() {
+    const { data: broadcastsData, isLoading, isError } = useBroadcasts();
+    const broadcasts = broadcastsData?.data ?? [];
+
     const liveCount = broadcasts.filter((b) => b.status === "live").length;
     const totalCount = broadcasts.length;
     const recentBroadcasts = [...broadcasts].sort(
@@ -351,6 +356,10 @@ export default function DashboardPage() {
 
     return (
         <main className="h-screen flex flex-col p-6 lg:p-8 overflow-hidden">
+            <Suspense fallback={null}>
+                <OAuthCallbackHandler />
+            </Suspense>
+
             {/* Header */}
             <motion.div
                 initial={{ opacity: 0, y: -8 }}
